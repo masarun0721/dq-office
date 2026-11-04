@@ -265,8 +265,7 @@ export function Office({
         ]
         : [
           { t: "きろくを よみこんだ。" },
-          { t: `この きろくは ${file.updatedAt} のものだ。` },
-          { t: `さいしんは けさ 6:45に とどきます。この きろくは ${file.updatedAt} だ。` },
+          { t: `さいしんは 1じかんごとに とどきます。この きろくは ${file.updatedAt} だ。` },
         ]);
     } catch (error) {
       if (error instanceof Error && error.message === "auth") {

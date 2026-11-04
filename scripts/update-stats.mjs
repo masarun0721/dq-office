@@ -20,6 +20,7 @@ try {
 
 const data = assertOfficeData(opened.data);
 const sales = data.sales;
+const beforeStats = statsSignature(data);
 const ids = Object.keys(data.noteFollowers).filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id));
 let updatedAccounts = 0;
 let failedAccounts = ids.length === 0 ? 0 : Object.keys(data.noteFollowers).length - ids.length;
@@ -62,10 +63,14 @@ if (data.sales !== sales) {
   console.error("sales were modified; file not written");
   process.exit(1);
 }
+if (statsSignature(data) === beforeStats) {
+  console.log(`no stat changes; file left untouched; sales kept ${sales.length}`);
+  process.exit(0);
+}
 data.updatedAt = formatJst(new Date());
 const next = await encryptPayload(data, passphrase, envelope.salt);
 writeEnvelope(DATA_FILE, next);
-console.log(`updated ${updatedAccounts} accounts, failed ${failedAccounts}, sales kept ${sales.length}, articles ${data.articles.length}`);
+console.log(`updated ${updatedAccounts} accounts, failed ${failedAccounts}, sales kept ${sales.length}, articles ${data.articles.length}, at ${data.updatedAt}`);
 
 async function fetchAllContents(id) {
   const all = [];
@@ -92,6 +97,16 @@ async function fetchJson(url) {
     return response.json();
   }
   throw new Error(`http ${status}`);
+}
+
+function statsSignature(office) {
+  const followers = Object.keys(office.noteFollowers)
+    .sort()
+    .map((id) => [id, office.noteFollowers[id]]);
+  const articles = office.articles
+    .map((article) => [article.account, article.key, article.title, article.price, article.likes])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])));
+  return JSON.stringify({ followers, articles });
 }
 
 function formatJst(date) {
