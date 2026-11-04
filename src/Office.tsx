@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { decryptWithRawKey, exportRawKey } from "../scripts/crypto.mjs";
+import { mergeLiveNote, saveLiveOverlay, viewFromFile } from "./live-note";
 import { fetchEnvelope, loadRememberedKey, saveRememberedKey } from "./session";
 import { isOfficeData, type Article, type Member, type OfficeData, type Sale } from "./types";
 
@@ -242,14 +243,30 @@ export function Office({
       const opened = await decryptWithRawKey(envelope, raw);
       if (!isOfficeData(opened.data)) throw new Error("format");
       if (loadRememberedKey()) saveRememberedKey(raw);
-      onData(opened.data, opened.key);
-      const nextTotal = sumOf(opened.data.sales);
+      const file = opened.data;
+      let view = file;
+      let live = false;
+      try {
+        view = await mergeLiveNote(file);
+        if (view.sales !== file.sales) throw new Error("live");
+        saveLiveOverlay(view);
+        live = true;
+      } catch {
+        view = viewFromFile(file);
+      }
+      onData(view, opened.key);
+      const nextTotal = sumOf(view.sales);
       setShownG(nextTotal);
       setTargetG(nextTotal);
-      say([
-        { t: "さいしんの じょうほうを よみこんだ！" },
-        { t: `${opened.data.updatedAt} げんざいの きろくだ。` },
-      ]);
+      say(live
+        ? [
+          { t: "さいしんの じょうほうを よみこんだ！" },
+          { t: `${view.updatedAt} いまの きろくだ。` },
+        ]
+        : [
+          { t: "きろくを よみこんだ。" },
+          { t: `さいしんは 1じかんごとに とどきます。この きろくは ${file.updatedAt} だ。` },
+        ]);
     } catch (error) {
       if (error instanceof Error && error.message === "auth") {
         onLock("しかし あいことばが ちがうようだ…");
@@ -324,6 +341,7 @@ export function Office({
             </div>
           </div>
           <div className="win">
+            <div className="record-time">きろく {data.updatedAt}</div>
             <button type="button" className="text-btn" onClick={() => void refresh()} disabled={refreshing}>
               『さいしんの じょうほうを よみこむ』
             </button>
