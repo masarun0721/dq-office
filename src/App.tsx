@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { decryptPayload, exportRawKey, type Envelope } from "../scripts/crypto.mjs";
 import { Office } from "./Office";
+import { clearLiveOverlay, viewFromFile } from "./live-note";
 import { clearRememberedKey, fetchEnvelope, loadRememberedKey, openWithRememberedKey, saveRememberedKey } from "./session";
 import { isOfficeData, type OfficeData } from "./types";
 
@@ -27,7 +28,7 @@ export function App() {
         try {
           const opened = await openWithRememberedKey(file, remembered);
           if (cancel) return;
-          setSession(opened);
+          setSession({ data: viewFromFile(opened.data), key: opened.key });
         } catch {
           clearRememberedKey();
           if (!cancel) setGateError("しかし あいことばが ちがうようだ…");
@@ -57,7 +58,7 @@ export function App() {
       if (remember) saveRememberedKey(await exportRawKey(opened.key));
       else clearRememberedKey();
       setPassphrase("");
-      setSession({ data: opened.data, key: opened.key });
+      setSession({ data: viewFromFile(opened.data), key: opened.key });
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
       setGateError(code === "format"
@@ -72,6 +73,7 @@ export function App() {
 
   function lock(message = "") {
     clearRememberedKey();
+    clearLiveOverlay();
     setSession(null);
     setGateError(message);
   }
