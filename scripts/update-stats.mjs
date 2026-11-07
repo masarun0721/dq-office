@@ -22,7 +22,8 @@ try {
 const data = assertOfficeData(opened.data);
 const sales = data.sales;
 const beforeStats = statsSignature(data);
-const ids = noteIds(data);
+const bindings = configuredBindings(process.env.NOTE_ACCOUNTS);
+const ids = [...new Set([...noteIds(data), ...bindings.map((binding) => binding.noteId)])];
 if (ids.length === 0) {
   console.log("no note ids; file left untouched");
   process.exit(0);
@@ -68,6 +69,7 @@ if (data.sales !== sales) {
   console.error("sales were modified; file not written");
   process.exit(1);
 }
+linkConfiguredMembers(data, bindings);
 
 const statsChanged = statsSignature(data) !== beforeStats;
 const now = formatJst(new Date());
@@ -78,6 +80,41 @@ data.updatedAt = now;
 const next = await encryptPayload(data, passphrase, envelope.salt);
 writeEnvelope(DATA_FILE, next);
 console.log(`checked ${data.checkedAt} changed ${data.changedAt} statsChanged ${statsChanged} accounts ${ids.length} articles ${data.articles.length} sales ${sales.length}`);
+
+function configuredBindings(raw) {
+  const bindings = [];
+  const seen = new Set();
+  for (const part of String(raw ?? "").split(/[\s,]+/)) {
+    if (!part) continue;
+    const colon = part.indexOf(":");
+    if (colon === -1) {
+      if (!validNoteId(part) || seen.has(part)) continue;
+      seen.add(part);
+      bindings.push({ memberId: null, noteId: part });
+      continue;
+    }
+    const memberId = part.slice(0, colon);
+    const noteId = part.slice(colon + 1);
+    if (!validNoteId(memberId) || !validNoteId(noteId) || seen.has(noteId)) continue;
+    seen.add(noteId);
+    bindings.push({ memberId, noteId });
+  }
+  return bindings;
+}
+
+function linkConfiguredMembers(office, bindings) {
+  for (const binding of bindings) {
+    if (!binding.memberId) continue;
+    const member = office.members.find((item) => item && item.id === binding.memberId);
+    if (!member) continue;
+    const already = member.joined === true && member.account === binding.noteId;
+    const count = office.articles.filter((article) => article.account === binding.noteId).length;
+    member.account = binding.noteId;
+    member.joined = true;
+    member.works = count;
+    if (!already) member.status = `${count}ほんの きじを こうかいした`;
+  }
+}
 
 function noteIds(office) {
   const ids = new Set();

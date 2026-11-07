@@ -30,6 +30,7 @@ jobs:
         run: node scripts/update-stats.mjs
         env:
           OFFICE_PASSPHRASE: ${{ secrets.OFFICE_PASSPHRASE }}
+          NOTE_ACCOUNTS: ${{ secrets.NOTE_ACCOUNTS }}
       - name: Commit encrypted data
         id: commit
         run: |

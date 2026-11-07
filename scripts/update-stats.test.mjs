@@ -33,33 +33,47 @@ function catalog({ likes = 0, followers = 1, total = 1, pages = null, explode = 
   return { likes, followers, total, pageList, explode, extraId };
 }
 
-async function runCase(name, data, api) {
+const scriptPath = new URL("./update-stats.mjs", import.meta.url).pathname;
+const repoRoot = path.resolve(path.dirname(scriptPath), "..");
+
+async function runCase(name, data, api, noteAccounts = "") {
   const file = path.join(root, `${name}.enc.json`);
   fs.writeFileSync(file, `${JSON.stringify(await encryptPayload(data, pass))}\n`);
   const before = fs.readFileSync(file);
   const mock = path.join(root, `${name}.mock.mjs`);
   fs.writeFileSync(mock, `
 const api = ${JSON.stringify(api)};
+function specFor(id) {
+  return (api.byId && api.byId[id]) || api;
+}
 globalThis.fetch = async (url) => {
-  if (api.explode) throw new Error("down");
   const u = new URL(String(url));
   const id = u.pathname.split("/").filter(Boolean).at(-1) === "contents"
     ? u.pathname.split("/").filter(Boolean).at(-2)
     : u.pathname.split("/").filter(Boolean).at(-1);
+  const spec = specFor(id);
+  if (api.explode || spec.explode) throw new Error("down");
   if (!u.pathname.endsWith("/contents")) {
-    return new Response(JSON.stringify({ data: { followerCount: api.followers } }), { status: 200 });
+    return new Response(JSON.stringify({ data: { followerCount: spec.followers } }), { status: 200 });
   }
-  if (!u.searchParams.get("per")) throw new Error("missing per");
+  if (u.searchParams.get("per") !== "20") throw new Error("missing per");
   const page = Number(u.searchParams.get("page") || "1");
-  const slice = api.pageList[page - 1] ?? [];
-  const last = page >= api.pageList.length;
-  return new Response(JSON.stringify({ data: { contents: slice, isLastPage: last && api.total <= slice.length + (page - 1) * 20, totalCount: api.total } }), { status: 200 });
+  const slice = spec.pageList[page - 1] ?? [];
+  const collectedBefore = spec.pageList.slice(0, page - 1).reduce((sum, items) => sum + items.length, 0);
+  const last = page >= spec.pageList.length;
+  return new Response(JSON.stringify({
+    data: {
+      contents: slice,
+      isLastPage: last && spec.total <= collectedBefore + slice.length,
+      totalCount: spec.total,
+    },
+  }), { status: 200 });
 };
-await import(${JSON.stringify(path.join("/workspace/scripts/update-stats.mjs"))});
+await import(${JSON.stringify(scriptPath)});
 `);
   const result = spawnSync("node", [mock], {
-    cwd: "/workspace",
-    env: { ...process.env, OFFICE_PASSPHRASE: pass, OFFICE_DATA_FILE: file },
+    cwd: repoRoot,
+    env: { ...process.env, OFFICE_PASSPHRASE: pass, OFFICE_DATA_FILE: file, NOTE_ACCOUNTS: noteAccounts },
     encoding: "utf8",
   });
   return { result, before, file };
@@ -104,6 +118,57 @@ check("member id is fetched", added.result.status === 0 && added.result.stdout.i
 opened = await decryptPayload(JSON.parse(fs.readFileSync(added.file, "utf8")), pass);
 check("new id stored", opened.data.noteFollowers.extra === 1 && opened.data.articles.some((article) => article.account === "extra"));
 check("old sale still there", opened.data.sales.length === 1 && opened.data.sales[0].amount === 5);
+
+const many = Array.from({ length: 25 }, (_, index) => ({
+  key: `p${index}`,
+  name: "t",
+  price: 1,
+  likeCount: index === 24 ? 3 : 0,
+}));
+const paged = await runCase("paged", baseData(), catalog({
+  total: 25,
+  followers: 1,
+  pages: [many.slice(0, 20), many.slice(20)],
+}));
+check("full pages exit 0", paged.result.status === 0);
+opened = await decryptPayload(JSON.parse(fs.readFileSync(paged.file, "utf8")), pass);
+check("full pages keep the older article and add every page", opened.data.articles.length === 26);
+check("full pages apply the last page like", opened.data.articles.some((article) => article.likes === 3));
+check("full pages keep the sale", opened.data.sales[0].amount === 5 && opened.data.sales.length === 1);
+
+const four = baseData();
+four.members.push({ id: "clerk", job: "しょうにん", tag: "t", bot: "b", place: "p", account: "-", joined: false, works: 0, pending: 0, verb: "きじ", status: "まだ" });
+const extraArticles = Array.from({ length: 15 }, (_, index) => ({
+  key: `e${index}`,
+  name: "t",
+  price: 100,
+  likeCount: index === 0 ? 1 : 0,
+}));
+const backfill = await runCase("backfill", four, {
+  followers: 1,
+  total: 1,
+  pageList: [[{ key: "n1", name: "old", price: 100, likeCount: 0 }]],
+  byId: {
+    extra: { followers: 1, total: 15, pageList: [extraArticles] },
+  },
+}, "clerk:extra");
+check("backfill exits 0", backfill.result.status === 0 && backfill.result.stdout.includes("accounts 2"));
+opened = await decryptPayload(JSON.parse(fs.readFileSync(backfill.file, "utf8")), pass);
+const linked = opened.data.members.find((member) => member.id === "clerk");
+check("backfill links the member", linked.joined === true && linked.account === "extra" && linked.works === 15);
+check("backfill keeps member order", opened.data.members.map((member) => member.id).join(",") === "hero,other,clerk");
+check("backfill stores both catalogs", Object.keys(opened.data.noteFollowers).length === 2 && opened.data.articles.length === 16);
+check("backfill moves the change time", opened.data.changedAt === opened.data.checkedAt);
+check("backfill keeps the sale in place", opened.data.sales.length === 1 && opened.data.sales[0].item === "keep" && opened.data.sales[0].amount === 5);
+
+const blocked = await runCase("backfill-fail", four, {
+  followers: 1,
+  total: 1,
+  pageList: [[{ key: "n1", name: "old", price: 100, likeCount: 0 }]],
+  byId: { extra: { explode: true, followers: 0, total: 0, pageList: [] } },
+}, "clerk:extra");
+check("backfill failure exits 1", blocked.result.status === 1);
+check("backfill failure keeps bytes", fs.readFileSync(blocked.file).equals(blocked.before));
 
 if (failures) {
   console.error(`FAILED ${failures}`);
