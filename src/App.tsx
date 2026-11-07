@@ -1,8 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { decryptPayload, exportRawKey, type Envelope } from "../scripts/crypto.mjs";
 import { Office } from "./Office";
-import { clearLiveOverlay, viewFromFile } from "./live-note";
-import { clearRememberedKey, fetchEnvelope, loadRememberedKey, openWithRememberedKey, saveRememberedKey } from "./session";
+import { clearLiveOverlay, clearRememberedKey, fetchEnvelope, loadRememberedKey, openWithRememberedKey, saveRememberedKey } from "./session";
 import { isOfficeData, type OfficeData } from "./types";
 
 type Session = { data: OfficeData; key: CryptoKey };
@@ -20,7 +19,7 @@ export function App() {
     let cancel = false;
     (async () => {
       try {
-        const file = await fetchEnvelope(false);
+        const file = await fetchEnvelope();
         if (cancel) return;
         setEnvelope(file);
         const remembered = loadRememberedKey();
@@ -28,7 +27,8 @@ export function App() {
         try {
           const opened = await openWithRememberedKey(file, remembered);
           if (cancel) return;
-          setSession({ data: viewFromFile(opened.data), key: opened.key });
+          clearLiveOverlay();
+          setSession({ data: opened.data, key: opened.key });
         } catch {
           clearRememberedKey();
           if (!cancel) setGateError("しかし あいことばが ちがうようだ…");
@@ -51,14 +51,15 @@ export function App() {
     setGateError("");
     await new Promise((resolve) => setTimeout(resolve, 40));
     try {
-      const file = envelope ?? await fetchEnvelope(true);
+      const file = envelope ?? await fetchEnvelope();
       setEnvelope(file);
       const opened = await decryptPayload(file, passphrase);
       if (!isOfficeData(opened.data)) throw new Error("format");
       if (remember) saveRememberedKey(await exportRawKey(opened.key));
       else clearRememberedKey();
       setPassphrase("");
-      setSession({ data: viewFromFile(opened.data), key: opened.key });
+      clearLiveOverlay();
+      setSession({ data: opened.data, key: opened.key });
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
       setGateError(code === "format"

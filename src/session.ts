@@ -23,9 +23,17 @@ export function clearRememberedKey() {
   }
 }
 
-export async function fetchEnvelope(bust: boolean): Promise<Envelope> {
+export function clearLiveOverlay() {
+  try {
+    localStorage.removeItem("office-live-view");
+  } catch {
+    /* private mode */
+  }
+}
+
+export async function fetchEnvelope(): Promise<Envelope> {
   const url = new URL("data.enc.json", document.baseURI);
-  if (bust) url.searchParams.set("t", String(Date.now()));
+  url.searchParams.set("t", String(Date.now()));
   const response = await fetch(url.href, { cache: "no-store" });
   if (!response.ok) throw new Error("fetch");
   const body: unknown = await response.json();

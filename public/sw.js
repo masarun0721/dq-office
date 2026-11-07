@@ -1,4 +1,4 @@
-const CACHE = "office-shell-v1";
+const CACHE = "office-shell-v2";
 const PRECACHE = [
   "./",
   "./index.html",
@@ -43,7 +43,7 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.endsWith("/sw.js")) return;
 
   if (url.pathname.endsWith("/data.enc.json")) {
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkFirstData(request));
     return;
   }
 
@@ -55,10 +55,28 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(cacheFirst(request));
 });
 
+async function networkFirstData(request) {
+  const cache = await caches.open(CACHE);
+  const clean = new URL(request.url);
+  clean.search = "";
+  const cacheKey = new Request(clean.href);
+  try {
+    const bust = new URL(clean.href);
+    bust.searchParams.set("t", String(Date.now()));
+    const fresh = await fetch(bust.href, { cache: "no-store" });
+    if (fresh.ok) await cache.put(cacheKey, fresh.clone());
+    return fresh;
+  } catch {
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
+    throw new Error("offline");
+  }
+}
+
 async function networkFirst(request) {
   const cache = await caches.open(CACHE);
   try {
-    const fresh = await fetch(request);
+    const fresh = await fetch(request, { cache: "no-store" });
     if (fresh.ok) await cache.put(request, fresh.clone());
     return fresh;
   } catch {

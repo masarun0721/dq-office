@@ -29,12 +29,22 @@ export type Article = {
 
 export type OfficeData = {
   updatedAt: string;
+  checkedAt?: string;
+  changedAt?: string;
   sales: Sale[];
   members: Member[];
   noteFollowers: Record<string, number>;
   articles: Article[];
   log: string[];
 };
+
+export function checkedAtOf(data: OfficeData): string {
+  return data.checkedAt || data.updatedAt;
+}
+
+export function changedAtOf(data: OfficeData): string {
+  return data.changedAt || data.updatedAt;
+}
 
 export function isOfficeData(value: unknown): value is OfficeData {
   if (!value || typeof value !== "object") return false;
