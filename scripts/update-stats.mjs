@@ -6,7 +6,8 @@ import { decryptPayload, encryptPayload } from "./crypto.mjs";
 import { DATA_FILE, assertOfficeData, readEnvelope, requirePassphrase, writeEnvelope } from "./data-file.mjs";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const MAX_PAGES = 20;
+const PAGE_SIZE = 20;
+const MAX_PAGES = 40;
 
 const passphrase = requirePassphrase("OFFICE_PASSPHRASE");
 const envelope = readEnvelope(DATA_FILE);
@@ -21,17 +22,22 @@ try {
 const data = assertOfficeData(opened.data);
 const sales = data.sales;
 const beforeStats = statsSignature(data);
-const ids = Object.keys(data.noteFollowers).filter((id) => /^[A-Za-z0-9_-]{1,64}$/.test(id));
-let updatedAccounts = 0;
-let failedAccounts = ids.length === 0 ? 0 : Object.keys(data.noteFollowers).length - ids.length;
+const ids = noteIds(data);
+if (ids.length === 0) {
+  console.log("no note ids; file left untouched");
+  process.exit(0);
+}
 
+let failedAccounts = 0;
 for (const id of ids) {
   try {
     const creator = await fetchJson(`https://note.com/api/v2/creators/${encodeURIComponent(id)}`);
     const followers = creator?.data?.followerCount;
     if (typeof followers === "number" && followers >= 0) data.noteFollowers[id] = followers;
+    else if (!(id in data.noteFollowers)) throw new Error("incomplete");
 
-    const notes = await fetchAllContents(id);
+    const hadArticles = data.articles.some((article) => article.account === id);
+    const notes = await fetchAllContents(id, hadArticles);
     for (const note of notes) {
       if (!note || typeof note.key !== "string" || note.key === "") continue;
       const title = typeof note.name === "string" ? note.name : "";
@@ -46,7 +52,6 @@ for (const id of ids) {
         data.articles.push({ account: id, key: note.key, title, price, likes });
       }
     }
-    updatedAccounts += 1;
     await sleep(400);
   } catch {
     failedAccounts += 1;
@@ -54,8 +59,8 @@ for (const id of ids) {
   }
 }
 
-if (ids.length > 0 && updatedAccounts === 0) {
-  console.error("every account refresh failed; file not written");
+if (failedAccounts > 0) {
+  console.error(`source fetch incomplete; file left untouched; failed ${failedAccounts}`);
   process.exit(1);
 }
 
@@ -63,24 +68,55 @@ if (data.sales !== sales) {
   console.error("sales were modified; file not written");
   process.exit(1);
 }
-if (statsSignature(data) === beforeStats) {
-  console.log(`no stat changes; file left untouched; sales kept ${sales.length}`);
-  process.exit(0);
-}
-data.updatedAt = formatJst(new Date());
+
+const statsChanged = statsSignature(data) !== beforeStats;
+const now = formatJst(new Date());
+const previousChange = typeof data.changedAt === "string" ? data.changedAt : data.updatedAt;
+data.checkedAt = now;
+data.changedAt = statsChanged ? now : previousChange;
+data.updatedAt = now;
 const next = await encryptPayload(data, passphrase, envelope.salt);
 writeEnvelope(DATA_FILE, next);
-console.log(`updated ${updatedAccounts} accounts, failed ${failedAccounts}, sales kept ${sales.length}, articles ${data.articles.length}, at ${data.updatedAt}`);
+console.log(`checked ${data.checkedAt} changed ${data.changedAt} statsChanged ${statsChanged} accounts ${ids.length} articles ${data.articles.length} sales ${sales.length}`);
 
-async function fetchAllContents(id) {
-  const all = [];
-  for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const body = await fetchJson(`https://note.com/api/v2/creators/${encodeURIComponent(id)}/contents?kind=note&page=${page}`);
-    const contents = Array.isArray(body?.data?.contents) ? body.data.contents : [];
-    all.push(...contents);
-    if (contents.length === 0 || body?.data?.isLastPage === true) break;
-    await sleep(400);
+function noteIds(office) {
+  const ids = new Set();
+  for (const id of Object.keys(office.noteFollowers ?? {})) if (validNoteId(id)) ids.add(id);
+  for (const member of office.members ?? []) {
+    if (member && validNoteId(member.account)) ids.add(member.account);
   }
+  return [...ids];
+}
+
+function validNoteId(id) {
+  return typeof id === "string" && /^[A-Za-z0-9_][A-Za-z0-9_-]{1,63}$/.test(id);
+}
+
+async function fetchAllContents(id, hadArticles) {
+  const all = [];
+  const seen = new Set();
+  let total = null;
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const body = await fetchJson(`https://note.com/api/v2/creators/${encodeURIComponent(id)}/contents?kind=note&page=${page}&per=${PAGE_SIZE}`);
+    const payload = body?.data ?? {};
+    const contents = Array.isArray(payload.contents) ? payload.contents : [];
+    if (typeof payload.totalCount === "number") total = payload.totalCount;
+    if (page === 1 && total === 0 && contents.length === 0) {
+      if (hadArticles) throw new Error("incomplete");
+      return [];
+    }
+    let added = 0;
+    for (const note of contents) {
+      if (!note || typeof note.key !== "string" || note.key === "" || seen.has(note.key)) continue;
+      seen.add(note.key);
+      all.push(note);
+      added += 1;
+    }
+    if (total !== null && all.length >= total) return all;
+    if (contents.length === 0 || added === 0) break;
+    await sleep(300);
+  }
+  if (total === null || all.length < total) throw new Error("incomplete");
   return all;
 }
 

@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { decryptWithRawKey, exportRawKey } from "../scripts/crypto.mjs";
-import { mergeLiveNote, saveLiveOverlay, viewFromFile } from "./live-note";
-import { fetchEnvelope, loadRememberedKey, saveRememberedKey } from "./session";
-import { isOfficeData, type Article, type Member, type OfficeData, type Sale } from "./types";
+import { clearLiveOverlay, fetchEnvelope, loadRememberedKey, saveRememberedKey } from "./session";
+import { changedAtOf, checkedAtOf, isOfficeData, type Article, type Member, type OfficeData, type Sale } from "./types";
 
 const COMMANDS = ["しらべる", "つよさ", "ゴールド", "たたかう", "ひろば", "はなす"] as const;
 type Cmd = (typeof COMMANDS)[number];
@@ -238,35 +237,21 @@ export function Office({
     setRefreshing(true);
     say([{ t: "よみこみ ちゅう…" }]);
     try {
-      const envelope = await fetchEnvelope(true);
+      const envelope = await fetchEnvelope();
       const raw = await exportRawKey(keyRef.current);
       const opened = await decryptWithRawKey(envelope, raw);
       if (!isOfficeData(opened.data)) throw new Error("format");
       if (loadRememberedKey()) saveRememberedKey(raw);
       const file = opened.data;
-      let view = file;
-      let live = false;
-      try {
-        view = await mergeLiveNote(file);
-        if (view.sales !== file.sales) throw new Error("live");
-        saveLiveOverlay(view);
-        live = true;
-      } catch {
-        view = viewFromFile(file);
-      }
-      onData(view, opened.key);
-      const nextTotal = sumOf(view.sales);
+      clearLiveOverlay();
+      onData(file, opened.key);
+      const nextTotal = sumOf(file.sales);
       setShownG(nextTotal);
       setTargetG(nextTotal);
-      say(live
-        ? [
-          { t: "さいしんの じょうほうを よみこんだ！" },
-          { t: `${view.updatedAt} いまの きろくだ。` },
-        ]
-        : [
-          { t: "きろくを よみこんだ。" },
-          { t: `さいしんは 1じかんごとに とどきます。この きろくは ${file.updatedAt} だ。` },
-        ]);
+      say([
+        { t: "きろくを よみこんだ。" },
+        { t: `たしかめたのは ${checkedAtOf(file)}。かわったのは ${changedAtOf(file)}。` },
+      ]);
     } catch (error) {
       if (error instanceof Error && error.message === "auth") {
         onLock("しかし あいことばが ちがうようだ…");
@@ -341,7 +326,8 @@ export function Office({
             </div>
           </div>
           <div className="win">
-            <div className="record-time">きろく {data.updatedAt}</div>
+            <div className="record-time">たしかめた {checkedAtOf(data)}</div>
+            <div className="record-changed">かわった {changedAtOf(data)}</div>
             <button type="button" className="text-btn" onClick={() => void refresh()} disabled={refreshing}>
               『さいしんの じょうほうを よみこむ』
             </button>
@@ -372,7 +358,7 @@ export function Office({
         <div className="detail win">
           {(cmd === "しらべる" || cmd === "はなす") && (
             <div>
-              <div className="section">▶ ばしょの ようす（{data.updatedAt} げんざい）</div>
+              <div className="section">▶ ばしょの ようす（たしかめた {checkedAtOf(data)}）</div>
               {data.members.map((member) => (
                 <div key={member.id} className="row">
                   <span>
